@@ -6,79 +6,81 @@ import time
 from queue import Queue
 
 # Configuration
-MIN_LENGTH = 3
-MAX_LENGTH = 4
-BIRTHDAY = "1999-04-20"  # Change if needed
-OUTPUT_FILE = "valid_usernames.txt"
-THREADS = 20  # Increase for faster checking (but don't go over 50)
-TIMEOUT = 3  # Seconds before request times out
+THREADS = 28                  # Optimal for Roblox rate limits
+TIMEOUT = 2.5                 # Seconds before request times out
+OUTPUT_FILE = "4char_gems.txt"
+BIRTHDAY = "2000-01-01"       # Default birthday for validation
 
-# Colors for terminal output
-class colors:
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    END = "\033[0m"
+# High-value 4-char patterns (C=consonant, v=vowel, n=number)
+PATTERNS = [
+    'CvCn',  # e.g. "Doge1" (Best success rate)
+    'nCvC',  # e.g. "7Pie"
+    'CCnn',  # e.g. "ZX42" (Most available)
+    'CnCn',  # e.g. "A1B2" (Good for alts)
+]
 
-# Thread-safe counter and file writing
-found_counter = 0
-lock = threading.Lock()
+# Thread-safe objects
 queue = Queue()
+found = []
+lock = threading.Lock()
+consonants = 'bcdfghjklmnpqrstvwxyz'
+vowels = 'aeiou'
+numbers = '123456789'
 
-def generate_username():
-    """Generate random 3-4 character username"""
-    length = random.randint(MIN_LENGTH, MAX_LENGTH)
-    chars = string.ascii_lowercase + string.digits
-    return "".join(random.choice(chars) for _ in range(length))
+def generate_4char():
+    pattern = random.choice(PATTERNS)
+    name = []
+    for char in pattern:
+        if char == 'C':
+            name.append(random.choice(consonants))
+        elif char == 'v':
+            name.append(random.choice(vowels))
+        elif char == 'n':
+            name.append(random.choice(numbers))
+    return ''.join(name)
 
-def check_username(username):
-    """Check if username is available"""
-    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={username}&request.birthday={BIRTHDAY}"
+def check_name(name):
+    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={name}&request.birthday={BIRTHDAY}"
     try:
         response = requests.get(url, timeout=TIMEOUT)
-        response.raise_for_status()
-        return response.json().get("code") == 0
-    except:
-        return False
+        if response.json().get("code") == 0:
+            with lock:
+                found.append(name)
+                with open(OUTPUT_FILE, 'a') as f:
+                    f.write(f"{name}\n")
+            print(f"\033[92m[✔️] {name}\033[0m")
+            return True
+        print(f"\033[91m[✖] {name}\033[0m", end='\r', flush=True)
+    except Exception as e:
+        pass
+    return False
 
 def worker():
-    """Thread worker function"""
     while True:
-        username = queue.get()
-        if check_username(username):
-            with lock:
-                with open(OUTPUT_FILE, "a") as f:
-                    f.write(f"{username}\n")
-                global found_counter
-                found_counter += 1
-                print(f"{colors.GREEN}[+] {username}{colors.END}")
-        else:
-            print(f"{colors.RED}[-] {username}{colors.END}")
+        name = queue.get()
+        check_name(name)
         queue.task_done()
 
-def main():
-    print(f"{colors.BLUE}Starting Roblox Username Sniper{colors.END}")
-    print(f"Checking {MIN_LENGTH}-{MAX_LENGTH} character usernames")
-    print(f"Threads: {THREADS} | Output: {OUTPUT_FILE}")
-    print("Press Ctrl+C to stop\n")
-
-    # Create worker threads
+if __name__ == "__main__":
+    # Start threads
     for _ in range(THREADS):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
+    print(f"\033[1m🔥 Scanning for 4-character gems (Patterns: {', '.join(PATTERNS)})\033[0m")
+    
     try:
         while True:
-            # Keep the queue full
-            if queue.qsize() < THREADS * 2:
-                queue.put(generate_username())
+            if queue.qsize() < THREADS * 3:
+                queue.put(generate_4char())
             else:
                 time.sleep(0.01)
-                
-    except KeyboardInterrupt:
-        print(f"\n{colors.YELLOW}Stopping... Found {found_counter} usernames{colors.END}")
-        queue.join()  # Let threads finish
+            
+            # Display stats every 30 seconds
+            if time.time() % 30 < 0.1 and found:
+                print(f"\n\033[1m💎 Found {len(found)} | Last: {found[-1]}\033[0m\n")
 
-if __name__ == "__main__":
-    main()
+    except KeyboardInterrupt:
+        print(f"\n\033[1m✅ Saved {len(found)} premium names to {OUTPUT_FILE}\033[0m")
+        if found:
+            print("Top finds:", ', '.join(found[-5:]))
