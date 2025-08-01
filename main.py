@@ -6,81 +6,76 @@ import time
 from queue import Queue
 
 # Configuration
-THREADS = 28                  # Optimal for Roblox rate limits
-TIMEOUT = 2.5                 # Seconds before request times out
-OUTPUT_FILE = "4char_gems.txt"
-BIRTHDAY = "2000-01-01"       # Default birthday for validation
+THREADS = 30                  # Max safe threads
+TIMEOUT = 2                   # Seconds before timeout
+OUTPUT_FILE = "4letter_combos.txt"
 
-# High-value 4-char patterns (C=consonant, v=vowel, n=number)
-PATTERNS = [
-    'CvCn',  # e.g. "Doge1" (Best success rate)
-    'nCvC',  # e.g. "7Pie"
-    'CCnn',  # e.g. "ZX42" (Most available)
-    'CnCn',  # e.g. "A1B2" (Good for alts)
-]
-
-# Thread-safe objects
-queue = Queue()
+# Thread-safe setup
+queue = Queue(maxsize=1000)
 found = []
 lock = threading.Lock()
-consonants = 'bcdfghjklmnpqrstvwxyz'
-vowels = 'aeiou'
-numbers = '123456789'
+running = True
 
-def generate_4char():
-    pattern = random.choice(PATTERNS)
-    name = []
-    for char in pattern:
-        if char == 'C':
-            name.append(random.choice(consonants))
-        elif char == 'v':
-            name.append(random.choice(vowels))
-        elif char == 'n':
-            name.append(random.choice(numbers))
-    return ''.join(name)
+def generate_combo():
+    """Generates completely random 4-character combos"""
+    chars = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(chars) for _ in range(4))
 
-def check_name(name):
-    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={name}&request.birthday={BIRTHDAY}"
+def check_combo(combo):
+    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={combo}&request.birthday=2000-01-01"
     try:
         response = requests.get(url, timeout=TIMEOUT)
         if response.json().get("code") == 0:
             with lock:
-                found.append(name)
+                found.append(combo)
                 with open(OUTPUT_FILE, 'a') as f:
-                    f.write(f"{name}\n")
-            print(f"\033[92m[✔️] {name}\033[0m")
+                    f.write(f"{combo}\n")
+            print(f"\033[92m[AVAILABLE] {combo}\033[0m")
             return True
-        print(f"\033[91m[✖] {name}\033[0m", end='\r', flush=True)
-    except Exception as e:
+        print(f"\033[91m[taken] {combo}\033[0m", end='\r', flush=True)
+    except:
         pass
     return False
 
 def worker():
-    while True:
-        name = queue.get()
-        check_name(name)
-        queue.task_done()
+    while running:
+        try:
+            combo = queue.get(timeout=1)
+            check_combo(combo)
+            queue.task_done()
+            time.sleep(0.05)  # Critical to avoid blocks
+        except:
+            continue
 
-if __name__ == "__main__":
+def main():
+    global running
+    print("\033[1m🔥 BRUTE-FORCING ALL 4-CHAR COMBOS\033[0m")
+    
     # Start threads
+    threads = []
     for _ in range(THREADS):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
-
-    print(f"\033[1m🔥 Scanning for 4-character gems (Patterns: {', '.join(PATTERNS)})\033[0m")
+        threads.append(t)
     
     try:
+        # Main producer loop
         while True:
-            if queue.qsize() < THREADS * 3:
-                queue.put(generate_4char())
+            if queue.qsize() < THREADS * 10:
+                queue.put(generate_combo())
             else:
                 time.sleep(0.01)
             
-            # Display stats every 30 seconds
-            if time.time() % 30 < 0.1 and found:
-                print(f"\n\033[1m💎 Found {len(found)} | Last: {found[-1]}\033[0m\n")
-
+            # Stats every minute
+            if time.time() % 60 < 0.1 and found:
+                print(f"\n\033[1m💎 Found: {len(found)} | Last: {found[-1]}\033[0m\n")
+                
     except KeyboardInterrupt:
-        print(f"\n\033[1m✅ Saved {len(found)} premium names to {OUTPUT_FILE}\033[0m")
-        if found:
-            print("Top finds:", ', '.join(found[-5:]))
+        running = False
+        print("\n🛑 Stopping...")
+        for t in threads:
+            t.join(timeout=1)
+        print(f"\033[1m✅ Saved {len(found)} combos to {OUTPUT_FILE}\033[0m")
+
+if __name__ == "__main__":
+    main()
