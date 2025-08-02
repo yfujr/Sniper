@@ -3,79 +3,111 @@ import random
 import string
 import threading
 import time
-from queue import Queue
+import os
 
 # Configuration
-THREADS = 30                  # Max safe threads
-TIMEOUT = 2                   # Seconds before timeout
-OUTPUT_FILE = "4letter_combos.txt"
+THREADS = 150
+VALID_FILE = 'valid.txt'
+CHECKED_FILE = 'checked.txt'
+BIRTHDAY = '1999-04-20'
+LOG_TAKEN = True  # Show taken usernames
 
-# Thread-safe setup
-queue = Queue(maxsize=1000)
-found = []
+# Colors
+class bcolors:
+    OK = '\033[94m'
+    FAIL = '\033[91m'
+    END = '\033[0m'
+
+# Shared data
 lock = threading.Lock()
-running = True
+found = 0
+successful_usernames = []
+checked_usernames = set()
 
-def generate_combo():
-    """Generates completely random 4-character combos"""
-    chars = string.ascii_lowercase + string.digits
-    return ''.join(random.choice(chars) for _ in range(4))
+# Load previously checked usernames
+if os.path.exists(CHECKED_FILE):
+    with open(CHECKED_FILE, 'r') as f:
+        for line in f:
+            checked_usernames.add(line.strip())
 
-def check_combo(combo):
-    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={combo}&request.birthday=2000-01-01"
+def log_success(username, thread_id):
+    global found
+    with lock:
+        found += 1
+        successful_usernames.append(username)
+        print(f"{bcolors.OK}[{found}] [+] {username} is available [T{thread_id}]{bcolors.END}")
+        with open(VALID_FILE, 'a') as f:
+            f.write(username + '\n')
+
+def log_taken(username, thread_id):
+    if LOG_TAKEN:
+        with lock:
+            print(f"{bcolors.FAIL}[TAKEN] {username} [T{thread_id}]{bcolors.END}")
+
+def record_checked(username):
+    with lock:
+        if username not in checked_usernames:
+            checked_usernames.add(username)
+            with open(CHECKED_FILE, 'a') as f:
+                f.write(username + '\n')
+
+def make_username():
+    middle_chars = string.ascii_lowercase + string.digits + '_'
+    while True:
+        mid = ''.join(random.choice(middle_chars) for _ in range(3))
+        username = 'z' + mid + 'z'
+        if '__' in username:
+            continue
+        if username[1] == '_' or username[-2] == '_':
+            continue
+        return username
+
+def check_username_with_status(username):
+    url = f"https://auth.roblox.com/v1/usernames/validate?request.username={username}&request.birthday={BIRTHDAY}"
     try:
-        response = requests.get(url, timeout=TIMEOUT)
-        if response.json().get("code") == 0:
-            with lock:
-                found.append(combo)
-                with open(OUTPUT_FILE, 'a') as f:
-                    f.write(f"{combo}\n")
-            print(f"\033[92m[AVAILABLE] {combo}\033[0m")
-            return True
-        print(f"\033[91m[taken] {combo}\033[0m", end='\r', flush=True)
-    except:
-        pass
-    return False
+        r = requests.get(url)
+        if r.status_code == 429:
+            return None, 429
+        r.raise_for_status()
+        return r.json().get('code') == 0, r.status_code
+    except requests.RequestException:
+        return None, None
 
-def worker():
-    while running:
-        try:
-            combo = queue.get(timeout=1)
-            check_combo(combo)
-            queue.task_done()
-            time.sleep(0.05)  # Critical to avoid blocks
-        except:
+def worker(thread_id):
+    while True:
+        username = make_username()
+        with lock:
+            if username in checked_usernames:
+                continue
+
+        result, status = check_username_with_status(username)
+
+        if status == 429:
+            print(f"{bcolors.FAIL}[T{thread_id}] Rate limited. Skipping...{bcolors.END}")
+            time.sleep(5)
             continue
 
-def main():
-    global running
-    print("\033[1m🔥 BRUTE-FORCING ALL 4-CHAR COMBOS\033[0m")
-    
-    # Start threads
-    threads = []
-    for _ in range(THREADS):
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-        threads.append(t)
-    
-    try:
-        # Main producer loop
-        while True:
-            if queue.qsize() < THREADS * 10:
-                queue.put(generate_combo())
-            else:
-                time.sleep(0.01)
-            
-            # Stats every minute
-            if time.time() % 60 < 0.1 and found:
-                print(f"\n\033[1m💎 Found: {len(found)} | Last: {found[-1]}\033[0m\n")
-                
-    except KeyboardInterrupt:
-        running = False
-        print("\n🛑 Stopping...")
-        for t in threads:
-            t.join(timeout=1)
-        print(f"\033[1m✅ Saved {len(found)} combos to {OUTPUT_FILE}\033[0m")
+        if result is None:
+            time.sleep(0.1)
+            continue
 
-if __name__ == "__main__":
-    main()
+        record_checked(username)
+
+        if result:
+            log_success(username, thread_id)
+        else:
+            log_taken(username, thread_id)
+
+# Start threads
+print(f"[*] Starting {THREADS} threads searching 5-letter usernames starting and ending with 'z'... Press Ctrl+C to stop.\n")
+for i in range(THREADS):
+    threading.Thread(target=worker, args=(i+1,), daemon=True).start()
+
+try:
+    while True:
+        time.sleep(10)
+except KeyboardInterrupt:
+    print("\n[!] Stopped by user.")
+    print(f"\n✅ Found {found} valid 5-letter usernames:\n")
+    for u in successful_usernames:
+        print(f" - {u}")
