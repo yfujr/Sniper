@@ -52,22 +52,12 @@ def record_checked(username):
                 f.write(username + '\n')
 
 def make_username():
-    middle_chars = string.ascii_lowercase + string.digits + '_'
-    outer_chars = string.ascii_lowercase + string.digits
-
+    letters_only = string.ascii_lowercase
     while True:
-        a = random.choice(outer_chars)
-        b = random.choice(middle_chars)
-        c = random.choice(middle_chars)
+        a = random.choice(letters_only)
+        b = random.choice(letters_only)
+        c = random.choice(letters_only)
         username = a + b + c + b + a  # Palindrome: a b c b a
-
-        # Skip invalid patterns
-        if '__' in username:
-            continue
-        if username[0] == '_' or username[-1] == '_':
-            continue
-        if username[1] == '_' or username[-2] == '_':
-            continue
         return username
 
 def check_username_with_status(username):
@@ -107,7 +97,7 @@ def worker(thread_id):
             log_taken(username, thread_id)
 
 # Start threads
-print(f"[*] Starting {THREADS} threads searching for 5-letter palindromic usernames... Press Ctrl+C to stop.\n")
+print(f"[*] Starting {THREADS} threads searching for 5-letter palindromic letter-only usernames... Press Ctrl+C to stop.\n")
 for i in range(THREADS):
     threading.Thread(target=worker, args=(i+1,), daemon=True).start()
 
